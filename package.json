@@ -1,0 +1,55 @@
+{
+    "name": "kirin-plugin-wildduck",
+    "version": "0.0.1",
+    "private": true,
+    "description": "WildDuck receiver plugin for Kirin",
+    "keywords": [
+        "kirin",
+        "wildduck",
+        "email",
+        "mail",
+        "smtp",
+        "mail-server",
+        "receiver",
+        "plugin",
+        "zone-mail-suite",
+        "zms"
+    ],
+    "author": "NickOvt",
+    "license": "EUPL-1.2",
+    "homepage": "https://github.com/zone-eu/kirin-plugin-wildduck#readme",
+    "bugs": {
+        "url": "https://github.com/zone-eu/kirin-plugin-wildduck/issues"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/zone-eu/kirin-plugin-wildduck.git"
+    },
+    "type": "commonjs",
+    "main": "index.js",
+    "files": [
+        "config/",
+        "lib/",
+        "index.js",
+        "LICENSE",
+        "README.md"
+    ],
+    "scripts": {
+        "update": "rm -rf node_modules package-lock.json && ncu -u && npm install"
+    },
+    "dependencies": {
+        "@zone-eu/wildduck": "1.49.4",
+        "deep-extend": "0.6.0",
+        "gelf": "2.0.1",
+        "ioredis": "5.11.1",
+        "libmime": "5.4.1",
+        "mailauth": "4.13.3",
+        "mongodb": "4.17.2",
+        "nodemailer": "9.0.3",
+        "punycode.js": "2.3.1",
+        "srs.js": "0.1.0"
+    },
+    "engines": {
+        "node": ">=18.18.0"
+    }
+}
