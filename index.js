@@ -1367,6 +1367,7 @@ class ZoneMxPluginWildduck {
         const storeMessages = async () => {
             let prepared = false;
             const userList = Array.from(users).map(entry => entry[1]);
+            const zilter = txn.results.get('zilter');
             let result = false;
 
             await runSequentially(userList, async rcptData => {
@@ -1377,6 +1378,7 @@ class ZoneMxPluginWildduck {
                 const rspamd = txn.results.get('rspamd');
                 const recipient = rcptData.recipient;
                 const userData = rcptData.userData;
+                const zilterOverrides = zilter?.['rcpt-overrides']?.[recipient];
 
                 connection.logdebug(this, 'Filtering message for ' + recipient);
 
@@ -1409,6 +1411,7 @@ class ZoneMxPluginWildduck {
                             transtype: txn.notes.transmissionType,
                             spamScore: rspamd ? rspamd.score : false,
                             spamAction: rspamd ? rspamd.action : false,
+                            overrides: zilterOverrides || false,
                             time: new Date()
                         }
                     });
@@ -1431,6 +1434,10 @@ class ZoneMxPluginWildduck {
                     let targetMailbox;
                     let targetId;
                     let isSpam = false;
+                    const overrideFlags = Array.isArray(zilterOverrides?.flags) ? zilterOverrides.flags : [];
+                    const overrideIsSpam = overrideFlags.length
+                        ? overrideFlags.some(flag => (flag || '').toString().toLowerCase() !== 'ham')
+                        : undefined;
                     const filterMessages = [];
                     let matchingFilters;
 
@@ -1502,9 +1509,11 @@ class ZoneMxPluginWildduck {
                                 return;
                             }
 
-                            if (entry.spam) {
-                                isSpam = true;
-                                filterMessages.push('Spam');
+                            if ('spam' in entry || 'originalSpam' in entry) {
+                                isSpam = 'originalSpam' in entry ? !!entry.originalSpam : !!entry.spam;
+                                if (entry.spam) {
+                                    filterMessages.push('Spam');
+                                }
                                 return;
                             }
 
@@ -1547,6 +1556,7 @@ class ZoneMxPluginWildduck {
                                 _filter: filterMessages.length ? filterMessages.join('\n') : '',
                                 _filter_is_spam: isSpam ? 'yes' : 'no',
                                 _filters_matching: matchingFilters ? matchingFilters.join('\n') : '',
+                                _override_is_spam: overrideIsSpam === undefined ? undefined : overrideIsSpam ? 'yes' : 'no',
                                 _no_store: 'yes',
                                 _failure_msg: 'message dropped',
                                 _dropped: 'yes',
@@ -1565,6 +1575,7 @@ class ZoneMxPluginWildduck {
                                 _filter: filterMessages.length ? filterMessages.join('\n') : '',
                                 _filter_is_spam: isSpam ? 'yes' : 'no',
                                 _filters_matching: matchingFilters ? matchingFilters.join('\n') : '',
+                                _override_is_spam: overrideIsSpam === undefined ? undefined : overrideIsSpam ? 'yes' : 'no',
                                 _no_store: 'yes',
                                 _error: 'failed to store message',
                                 _failure: 'yes',
@@ -1588,6 +1599,7 @@ class ZoneMxPluginWildduck {
                             _filter: filterMessages.length ? filterMessages.join('\n') : '',
                             _filter_is_spam: isSpam ? 'yes' : 'no',
                             _filters_matching: matchingFilters ? matchingFilters.join('\n') : '',
+                            _override_is_spam: overrideIsSpam === undefined ? undefined : overrideIsSpam ? 'yes' : 'no',
                             _stored_mailbox: targetMailbox && targetMailbox.mailbox,
                             _stored_path: targetMailbox && targetMailbox.path,
                             _stored_uid: targetMailbox && targetMailbox.uid,
@@ -1811,11 +1823,14 @@ class ZoneMxPluginWildduck {
 
     checkRspamdBlacklist(txn) {
         const rspamd = txn.results.get('rspamd');
+        const zilter = txn.results.get('zilter');
         const symbols = (rspamd && rspamd.symbols) || rspamd;
 
         if (!symbols) {
             return false;
         }
+
+        const ignoreSymbols = zilter?.['ignore-symbols'];
 
         for (const key of this.rspamd.blacklist) {
             if (!(key in symbols)) {
@@ -1830,6 +1845,11 @@ class ZoneMxPluginWildduck {
             }
 
             if (score && score > 0) {
+                if (Array.isArray(ignoreSymbols) && ignoreSymbols.includes(key)) {
+                    this.loginfo(`Ignoring blacklisted Rspamd symbol ${key} due to zilter override`);
+                    continue;
+                }
+
                 return { key, value: symbols[key] };
             }
         }
@@ -1839,11 +1859,14 @@ class ZoneMxPluginWildduck {
 
     checkRspamdSoftlist(txn) {
         const rspamd = txn.results.get('rspamd');
+        const zilter = txn.results.get('zilter');
         const symbols = (rspamd && rspamd.symbols) || rspamd;
 
         if (!symbols) {
             return false;
         }
+
+        const ignoreSymbols = zilter?.['ignore-symbols'];
 
         for (const key of this.rspamd.softlist) {
             if (!(key in symbols)) {
@@ -1858,6 +1881,11 @@ class ZoneMxPluginWildduck {
             }
 
             if (score && score > 0) {
+                if (Array.isArray(ignoreSymbols) && ignoreSymbols.includes(key)) {
+                    this.loginfo(`Ignoring softlisted Rspamd symbol ${key} due to zilter override`);
+                    continue;
+                }
+
                 return { key, value: symbols[key] };
             }
         }
