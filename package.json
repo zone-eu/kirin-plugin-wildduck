@@ -1,6 +1,6 @@
 {
     "name": "@zone-eu/kirin-plugin-wildduck",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "WildDuck receiver plugin for Kirin",
     "keywords": [
         "kirin",
