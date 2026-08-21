@@ -176,10 +176,10 @@ DSN.rcpt_too_fast = () =>
 
 DSN.mbox_full_554 = () => DSN.create(554, 'Mailbox full', 2, 2);
 
-class ZoneMxPluginWildduck {
+class KirinPluginWildduck {
     constructor(plugin) {
         this.plugin = plugin;
-        this.title = plugin.options.title || 'ZoneMxPluginWildduck';
+        this.title = plugin.options.title || 'KirinPluginWildduck';
         this.cfg = deepExtend({}, DEFAULT_CONFIG, sanitizeConfig(plugin.config));
         this.resolver = async (name, rr) => await dns.promises.resolve(name, rr);
         this.db = false;
@@ -1910,9 +1910,9 @@ class ZoneMxPluginWildduck {
     }
 }
 
-module.exports.title = 'ZoneMxPluginWildduck';
+module.exports.title = 'KirinPluginWildduck';
 module.exports.init = (plugin, done) => {
-    const instance = new ZoneMxPluginWildduck(plugin);
+    const instance = new KirinPluginWildduck(plugin);
     const promise = instance.init();
 
     if (typeof done === 'function') {
