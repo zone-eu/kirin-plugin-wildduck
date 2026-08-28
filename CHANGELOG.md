@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/zone-eu/kirin-plugin-wildduck/compare/v0.1.1...v0.1.2) (2026-08-28)
+
+
+### Bug Fixes
+
+* ZMS-98: Add rspamd_is_spam logs for original rspamd results. Bump deps ([#6](https://github.com/zone-eu/kirin-plugin-wildduck/issues/6)) ([def8f13](https://github.com/zone-eu/kirin-plugin-wildduck/commit/def8f1314a6a3e0e5a678c4535d060a175e4f572))
+
 ## [0.1.1](https://github.com/zone-eu/kirin-plugin-wildduck/compare/v0.1.0...v0.1.1) (2026-08-21)
 
 
