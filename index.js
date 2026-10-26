@@ -3,6 +3,8 @@
 process.env.DISABLE_WILD_CONFIG = 'true';
 
 const os = require('os');
+const path = require('path');
+const crypto = require('crypto');
 const dns = require('dns');
 const deepExtend = require('deep-extend');
 const db = require('./lib/db');
@@ -15,6 +17,8 @@ const tools = require('@zone-eu/wildduck/lib/tools');
 const Maildropper = require('@zone-eu/wildduck/lib/maildropper');
 const FilterHandler = require('@zone-eu/wildduck/lib/filter-handler');
 const BimiHandler = require('@zone-eu/wildduck/lib/bimi-handler');
+const ApnClient = require('@zone-eu/wildduck/lib/apn-client');
+const SMIMEEncryptor = require('@zone-eu/smime-js');
 const autoreply = require('@zone-eu/wildduck/lib/autoreply');
 const wdErrors = require('@zone-eu/wildduck/lib/errors');
 const Gelf = require('gelf');
@@ -23,6 +27,7 @@ const libmime = require('libmime');
 const { promisify } = require('util');
 const wildduckPlugins = require('@zone-eu/wildduck/lib/plugins');
 const { hookMail: authHookMail, hookDataPost: authHookDataPost } = require('./lib/auth');
+const getMessageSubject = require('./lib/message-subject');
 
 const OK = 'OK';
 const DENY = 'DENY';
@@ -63,6 +68,10 @@ const DEFAULT_CONFIG = {
         type: 'gridstore',
         bucket: 'attachments',
         decodeBase64: true
+    },
+    aps: {
+        enabled: false,
+        sandbox: false
     },
     limits: {
         windowSize: 3600,
@@ -211,6 +220,7 @@ class KirinPluginWildduck {
     }
 
     async init() {
+        this.initializeSmime();
         this.plugin.addHook('smtp:mail_from', this.smtpMailFrom.bind(this));
         this.plugin.addHook('smtp:rcpt_to', this.smtpRcptTo.bind(this));
         this.plugin.addHook('smtp:data', this.smtpData.bind(this));
@@ -219,8 +229,24 @@ class KirinPluginWildduck {
         this.open_database();
     }
 
+    initializeSmime() {
+        let available = false;
+        try {
+            const { publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+            available = !!crypto.publicEncrypt(
+                { key: publicKey, padding: crypto.constants.RSA_PKCS1_PADDING },
+                Buffer.from('smime-probe')
+            ).length;
+        } catch {
+            // OpenSSL can disable RSA PKCS#1 v1.5 encryption.
+        }
+        SMIMEEncryptor.pkcs1v15Available = available;
+        this.loginfo('S/MIME RSA PKCS#1 v1.5 key transport is %s (OpenSSL %s)', available ? 'available' : 'unavailable', process.versions.openssl);
+    }
+
     async shutdown() {
         clearTimeout(this._dbRetryTimer);
+        this.db?.messageHandler?.notifier?.apn?.close();
         if (this.db?.redis?.quit) {
             try {
                 await this.db.redis.quit();
@@ -242,6 +268,9 @@ class KirinPluginWildduck {
         const connection = this.getConnection(session);
         return new Promise((resolve, reject) => {
             this.hook_mail((...args) => resolveHookResult(connection, resolve, reject, args), connection, [wrapAddress(address)]);
+        }).catch(err => {
+            this.logDeny(connection, err, 'mail');
+            throw err;
         });
     }
 
@@ -249,17 +278,68 @@ class KirinPluginWildduck {
         const connection = this.getConnection(session);
         return new Promise((resolve, reject) => {
             this.hook_rcpt((...args) => resolveHookResult(connection, resolve, reject, args), connection, [wrapAddress(address)]);
+        }).catch(err => {
+            this.logDeny(connection, err, 'rcpt', [wrapAddress(address)]);
+            throw err;
         });
     }
 
     async smtpData(_envelope, session) {
         const connection = this.getConnection(session);
-        await this.init_wildduck_transaction(connection);
-        await authHookDataPost(connection.transaction.getSourceStream(), this, connection);
+        try {
+            await this.init_wildduck_transaction(connection);
+            await authHookDataPost(connection.transaction.getSourceStream(), this, connection);
 
-        return new Promise((resolve, reject) => {
-            this.hook_queue((...args) => resolveHookResult(connection, resolve, reject, args), connection);
-        });
+            return await new Promise((resolve, reject) => {
+                this.hook_queue((...args) => resolveHookResult(connection, resolve, reject, args), connection);
+            });
+        } catch (err) {
+            this.logDeny(connection, err, 'queue');
+            throw err;
+        }
+    }
+
+    logDeny(connection, err, hook, recipients) {
+        const txn = connection.transaction;
+        if (!txn) {
+            return;
+        }
+
+        const rcpts = recipients || txn.rcpt_to || [];
+        const headerFrom = this.getHeaderFrom(txn);
+        for (const rcpt of rcpts.length ? rcpts : [false]) {
+            const address = typeof rcpt?.address === 'function' ? rcpt.address() : rcpt?.address;
+            const target = Array.from(txn.notes.targets?.users?.values() || []).find(entry => entry.recipient === address);
+            const logdata = {
+                short_message: '[DENY:' + txn.notes.sender + '] ' + txn.uuid,
+                _mail_action: 'deny',
+                _from: txn.notes.sender,
+                _subject: getMessageSubject(txn),
+                _queue_id: txn.uuid,
+                _ip: connection.remote.ip,
+                _proto: txn.notes.transmissionType,
+                _to: address,
+                _user: target?.userData?._id?.toString(),
+                _rejector: this.title,
+                _reject_code: txn.notes.rejectCode || this.title,
+                _error: err.message,
+                _error_code: err.code,
+                _response: `${err.responseCode || 450} ${err.message}`,
+                _hook: hook
+            };
+            if (headerFrom) {
+                logdata._header_from = headerFrom.address;
+                logdata._header_from_name = headerFrom.provided?.name;
+                let value = txn.header.get_all('From').join('; ');
+                try {
+                    value = libmime.decodeWords(value);
+                } catch {
+                    // Keep the original value if decoding fails.
+                }
+                logdata._header_from_value = value;
+            }
+            this.loggelf(logdata);
+        }
     }
 
     open_database() {
@@ -323,6 +403,18 @@ class KirinPluginWildduck {
 
                 this.db.messageHandler.loggelf = message => this.loggelf(message);
                 this.db.userHandler.loggelf = message => this.loggelf(message);
+
+                const aps = { ...this.cfg.aps };
+                for (const key of ['certPath', 'keyPath']) {
+                    if (aps[key]) {
+                        aps[key] = path.resolve(aps[key]);
+                    }
+                }
+                this.db.messageHandler.notifier.apn = ApnClient.get({
+                    config: aps,
+                    database: database.database,
+                    loggelf: message => this.loggelf(message)
+                });
 
                 this.maildrop = new Maildropper({ db: database, ...this.cfg.sender });
 
@@ -564,13 +656,22 @@ class KirinPluginWildduck {
     }
 
     hook_mail(next, connection, params) {
-        this.init_wildduck_transaction(connection).then(() => {
-            authHookMail(this, connection, params)
-                .then(() => {
-                    next();
-                })
-                .catch(err => next(err.smtpAction || DENYSOFT, err.message));
-        });
+        this.init_wildduck_transaction(connection)
+            .then(() => {
+                const txn = connection.transaction;
+                txn.notes.sender = params[0].address();
+                this.loggelf({
+                    short_message: '[MAIL FROM:' + txn.notes.sender + '] ' + txn.uuid,
+                    _mail_action: 'mail_from',
+                    _from: txn.notes.sender,
+                    _queue_id: txn.uuid,
+                    _ip: connection.remote.ip,
+                    _proto: txn.notes.transmissionType
+                });
+                return authHookMail(this, connection, params);
+            })
+            .then(() => next())
+            .catch(err => next(err.smtpAction || DENYSOFT, err.message));
     }
 
     hook_rcpt(next, connection, params) {
@@ -659,6 +760,7 @@ class KirinPluginWildduck {
                     _mail_action: 'rcpt_to',
                     _from: txn.notes.sender,
                     _to: rcpt.address(),
+                    _subject: getMessageSubject(txn),
                     _queue_id: txn.uuid,
                     _ip: remoteIp,
                     _proto: txn.notes.transmissionType
@@ -871,6 +973,9 @@ class KirinPluginWildduck {
                             encryptMessages: true,
                             encryptForwarded: true,
                             pubKey: true,
+                            smimeCerts: true,
+                            smimeCipher: true,
+                            smimeKeyTransport: true,
                             spamLevel: true,
                             storageUsed: true,
                             quota: true,
@@ -1094,17 +1199,11 @@ class KirinPluginWildduck {
         }
 
         const messageId = (txn.header.get('Message-Id') || '').toString();
-        let subject = (txn.header.get('Subject') || '').toString();
+        const subject = getMessageSubject(txn);
 
         const sendLogEntry = resolution => {
             if (resolution) {
                 const rspamd = txn.results.get('rspamd');
-
-                try {
-                    subject = libmime.decodeWords(subject).trim();
-                } catch {
-                    // ignore
-                }
 
                 const message = {
                     short_message: '[PROCESS] ' + queueId,
@@ -1141,7 +1240,7 @@ class KirinPluginWildduck {
 
         const finalChunks = txn.getMessageChunks();
         const finalChunkLength = txn.getMessageSize();
-        const finalBuffer = finalChunks[0];
+        const finalBuffer = finalChunks.length === 1 ? finalChunks[0] : Buffer.concat(finalChunks, finalChunkLength);
         const referencedUsers = this.getReferencedUsers(txn);
         const allowAutoreply = new Set();
 
@@ -1234,6 +1333,7 @@ class KirinPluginWildduck {
                         short_message: '[QUEUED] ' + envelope.id,
                         _parent_queue_id: queueId,
                         _from: txn.notes.sender,
+                        _subject: subject,
                         _to: targets.map(target => ((target && target.value) || target).toString().replace(/\?.*$/, '')).join('\n'),
                         _queued: 'yes',
                         _forwarded: 'yes',
@@ -1330,6 +1430,7 @@ class KirinPluginWildduck {
                         short_message: '[QUEUED] ' + result.id,
                         _parent_queue_id: queueId,
                         _from: addressData.address,
+                        _subject: subject,
                         _to: addressData.address,
                         _queued: 'yes',
                         _autoreply: 'yes',
@@ -1345,6 +1446,7 @@ class KirinPluginWildduck {
                         _target_address: addressData.address,
                         _parent_queue_id: queueId,
                         _from: addressData.address,
+                        _subject: subject,
                         _to: addressData.address,
                         _failure: 'yes',
                         _error: err.message,
@@ -1479,6 +1581,7 @@ class KirinPluginWildduck {
                                     _queue_id: entry['forward-queue-id'],
                                     _parent_queue_id: queueId,
                                     _from: recipient,
+                                    _subject: subject,
                                     _to: entry.forward,
                                     _queued: 'yes',
                                     _forwarded: 'yes',
@@ -1502,6 +1605,7 @@ class KirinPluginWildduck {
                                     _queue_id: entry['autoreply-queue-id'],
                                     _parent_queue_id: queueId,
                                     _from: recipient,
+                                    _subject: subject,
                                     _to: entry.autoreply,
                                     _queued: 'yes',
                                     _autoreply: 'yes',
@@ -1740,7 +1844,7 @@ class KirinPluginWildduck {
 
     getHeaderFrom(txn) {
         const fromAddresses = new Map();
-        [].concat(txn.header.get_all('From') || []).forEach(entry => {
+        [].concat(txn.header?.get_all?.('From') || []).forEach(entry => {
             const walk = addresses => {
                 addresses.forEach(address => {
                     if (address.address) {

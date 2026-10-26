@@ -34,17 +34,19 @@
         "README.md"
     ],
     "scripts": {
+        "test": "node --test",
         "update": "rm -rf node_modules package-lock.json && ncu -u && npm install"
     },
     "dependencies": {
-        "@zone-eu/wildduck": "1.50.0",
+        "@zone-eu/smime-js": "0.1.0",
+        "@zone-eu/wildduck": "1.55.1",
         "deep-extend": "0.6.0",
         "gelf": "2.0.1",
         "ioredis": "5.11.1",
-        "libmime": "5.4.2",
-        "mailauth": "5.0.2",
+        "libmime": "5.6.3",
+        "mailauth": "8.0.4",
         "mongodb": "4.17.2",
-        "nodemailer": "9.0.6",
+        "nodemailer": "10.2.1",
         "punycode.js": "2.3.1",
         "srs.js": "0.1.0"
     },
