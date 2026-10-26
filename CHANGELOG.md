@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/zone-eu/kirin-plugin-wildduck/compare/v0.1.2...v0.2.0) (2026-10-26)
+
+
+### Features
+
+* Add support for WD's XAPPLEPUSHSERVICE, S3 and implement other fixes and QoL changes ([#8](https://github.com/zone-eu/kirin-plugin-wildduck/issues/8)) ([b7af731](https://github.com/zone-eu/kirin-plugin-wildduck/commit/b7af73100f0ac9d2da24e3eeca98f788c7835b43))
+
 ## [0.1.2](https://github.com/zone-eu/kirin-plugin-wildduck/compare/v0.1.1...v0.1.2) (2026-08-28)
 
 
