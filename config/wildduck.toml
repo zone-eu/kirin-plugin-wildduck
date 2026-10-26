@@ -14,14 +14,45 @@ enabled = true
 zone = "default"
 gfs = "mail"
 collection = "zone-queue"
+# Share with WildDuck to enable forwarding loop detection.
+# loopSecret = "secret value"
 
 [srs]
 secret = "secret value"
 
 [attachments]
+# Preferred backend for new attachments. Existing attachments retain their backend.
 type = "gridstore"
 bucket = "attachments"
 decodeBase64 = true
+
+# Required for S3 storage, including reading existing S3 attachments when using gridstore.
+# Match WildDuck's attachments.s3 settings; keep the prefix stable and unique.
+# Without explicit credentials, the AWS SDK default credential chain is used.
+# [attachments.s3]
+# bucket = "wildduck-attachments"
+# prefix = "production"
+# region = "us-east-1"
+# endpoint = "https://s3.example.com"
+# forcePathStyle = false
+# accessKeyId = ""
+# secretAccessKey = ""
+# sessionToken = ""
+# maxAttempts = 3
+# connectionTimeout = 5000
+# requestTimeout = 30000
+# readTimeout = 30000
+# slowReaderTimeout = 300000
+# maxSockets = 50
+
+# Match WildDuck's imap.aps settings and use the same messages database.
+[aps]
+enabled = false
+sandbox = false
+# topic = "com.apple.mobilemail.push.example.com"
+# Certificate and private key in PEM format. Relative paths use Kirin's working directory.
+# certPath = "config/apns.pem"
+# keyPath = "config/apns.key"
 
 [limits]
 windowSize = 3600
